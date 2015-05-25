@@ -42,7 +42,7 @@ public:
 	}
 };
 
-int _tmain(int argc, _TCHAR* argv[])
+int main(int argc, char* argv[])
 {
 	network nn;
 
