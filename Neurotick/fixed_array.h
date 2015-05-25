@@ -44,3 +44,7 @@ template<typename T, unsigned N, typename F>
 auto fixedMap(std::array<T, N> const& arr, F&& f) {
 	return detail::fixedMapImpl(arr, std::forward<F>(f), detail::marker<0>());
 }
+
+template<typename T, typename... P> auto make_array(T&& a, P&&... b) {
+	return std::array<std::decay_t<T>, sizeof...(P)+1>({ std::forward<T>(a), std::forward<P>(b)... });
+}

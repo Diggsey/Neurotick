@@ -49,8 +49,9 @@ int main(int argc, char* argv[])
 	extent<1> size(8);
 
 	auto a = nn.make<module_input>(size);
-	auto b = nn.make<module_add<2>>(a->getOutput(), a->getOutput());
-	auto c = nn.make<module_div>(b->getOutput(), a->getOutput());
+	auto b = nn.make<module_add<2>>(make_array( a->getOutput(), a->getOutput() ));
+	auto c = nn.make<module_div>(make_array( b->getOutput(), a->getOutput() ));
+	auto d = nn.make<module_linear>(size, c->getOutput());
 
 	nn.compile();
 
@@ -63,6 +64,7 @@ int main(int argc, char* argv[])
 	printArray(a->getOutput().view().m_value);
 	printArray(b->getOutput().view().m_value);
 	printArray(c->getOutput().view().m_value);
+	printArray(d->getOutput().view().m_value);
 
 	getchar();
 	return 0;

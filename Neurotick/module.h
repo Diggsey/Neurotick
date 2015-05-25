@@ -17,17 +17,17 @@ protected:
 	tensor<> m_output;
 	std::array<tensor_view<>, N> m_inputs;
 
-	template<typename... T>
-	inline module_function(network* nn, extent<1> extent, T... inputs) : module(nn), m_output(nn, tensor_type_transient, extent), m_inputs({ inputs... }) { }
+	inline module_function(network* nn, extent<1> extent, std::array<tensor_view<>, N> inputs) : module(nn), m_output(nn, tensor_type_transient, extent), m_inputs(inputs) { }
 
 public:
-	template<typename... T>
-	inline module_function(network* nn, T... inputs) : module(nn), m_output(nn, tensor_type_transient, S::extent({ inputs... })), m_inputs({ inputs... }) { }
+	struct state_t {};
+
+	inline module_function(network* nn, std::array<tensor_view<>, N> inputs) : module(nn), m_output(nn, tensor_type_transient, S::extent(inputs)), m_inputs(inputs) { }
 
 	virtual void updateOutput() {
 		auto inputs = fixedMap(m_inputs, [](auto& x) { return x.view(); });
 		table_view<> output = m_output.view();
-
+		auto state = static_cast<S*>(this)->getState();
 
 		try {
 			// Update outputs
@@ -36,8 +36,8 @@ public:
 			parallel_for_each(
 				output.extent(),
 				[=](index<1> idx) restrict(amp) {
-				S::forward(idx, output, inputs);
-			}
+					S::forward(idx, output, inputs, state);
+				}
 			);
 
 			if (m_network->getIsLearning()) {
@@ -48,10 +48,8 @@ public:
 				parallel_for_each(
 					output.extent(),
 					[=](index<1> idx) restrict(amp) {
-					range_to<N>::each<0>([=](int i, auto& inputi) restrict(amp) {
-						inputi.m_gradient[idx] = 0.0f;
-					}, inputs);
-				}
+						S::clearGradient(idx, output, inputs, state);
+					}
 				);
 			}
 
@@ -63,12 +61,13 @@ public:
 	virtual void updateGradInput() {
 		auto inputs = fixedMap(m_inputs, [](auto& x) { return x.view(); });
 		table_view<> output = m_output.view();
+		auto state = static_cast<S*>(this)->getState();
 
 		try {
 			parallel_for_each(
 				output.extent(),
 				[=](index<1> idx) restrict(amp) {
-					S::backward(idx, output, inputs);
+					S::backward(idx, output, inputs, state);
 				}
 			);
 		} catch (concurrency::runtime_exception& ex) {
@@ -80,6 +79,22 @@ public:
 	inline tensor_view<> getOutput() {
 		return tensor_view<>(m_output);
 	}
+	inline state_t getState() {
+		return state_t();
+	};
+	static inline void clearGradient(index<1> idx, table_view<> const& output, fixed_array<table_view<>, N> const& inputs, state_t state) restrict(amp) {
+		range_to<N>::each<0>([=](int i, auto& inputi) restrict(amp) {
+			inputi.m_gradient[idx] = 0.0f;
+		}, inputs);
+	}
+	static inline extent<1> extent(std::array<tensor_view<>, N> inputs) {
+		auto extent = inputs.begin()->extent();
+		for (auto& input : inputs) {
+			if (input.extent() != extent)
+				throw "Extent mismatch";
+		}
+		return extent;
+	}
 };
 
 // Base class for modules of the form `foldl <op> [inputs...]`,
@@ -89,17 +104,8 @@ class module_scalar : public module_function<N, S> {
 public:
 	using module_function::module_function;
 
-	static inline extent<1> extent(std::initializer_list<tensor_view<>> inputs) {
-		auto extent = inputs.begin()->extent();
-		for (auto& input : inputs) {
-			if (input.extent() != extent)
-				throw "Extent mismatch";
-		}
-		return extent;
-	}
-
 	template<bool unused = false>
-	static inline void forward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, N> const& inputs) restrict(amp) {
+	static inline void forward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, N> const& inputs, state_t state) restrict(amp) {
 		// Default implementation of `forward` is essentially `foldl <op> [inputs...]`
 
 		float acc = S::identity();
@@ -109,7 +115,7 @@ public:
 		output.m_value[idx] = acc;
 	}
 	template<bool unused = false>
-	static inline void backward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, N> const& inputs) restrict(amp) {
+	static inline void backward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, N> const& inputs, state_t state) restrict(amp) {
 		// This is a fun little snippet of code which calculates all N partial
 		// derivatives of `foldl <op> [inputs...]` in O(N) time
 
@@ -150,10 +156,10 @@ class module_unary : public module_scalar<1, S> {
 public:
 	using module_scalar::module_scalar;
 
-	static inline void forward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs) restrict(amp) {
+	static inline void forward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp) {
 		output.m_value[idx] = S::op(inputs[0].m_value[idx]);
 	}
-	static inline void backward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs) restrict(amp) {
+	static inline void backward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp) {
 		inputs[0].m_gradient[idx] += output.m_gradient[idx] * S::dop(output.m_value[idx], inputs[0].m_value[idx]);
 	}
 };
@@ -276,15 +282,91 @@ public:
 	}
 };
 class module_linear : public module_function<1, module_linear> {
+protected:
+	tensor<2> m_weights;
+	tensor<> m_bias;
 public:
-	template<typename... T>
-	inline module_linear(network* nn, extent<1> extent, T... inputs) : module_function(nn, extent, inputs...) { }
+	struct state_t {
+		table_view<2> weights;
+		table_view<> bias;
+	};
 
-	static inline void forward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs) restrict(amp) {
-		// TODO
+	// The gradients need to be calculated in the other direction from the outputs
+	virtual void updateGradInput() {
+		auto inputs = fixedMap(m_inputs, [](auto& x) { return x.view(); });
+		table_view<> output = m_output.view();
+		auto state = getState();
+
+		try {
+			parallel_for_each(
+				m_output.extent(),
+				[=](index<1> idx) restrict(amp) {
+					backwardBias(idx, output, inputs, state);
+				}
+			);
+			parallel_for_each(
+				m_inputs[0].extent(),
+				[=](index<1> idx) restrict(amp) {
+					backward(idx, output, inputs, state);
+				}
+			);
+		} catch (concurrency::runtime_exception& ex) {
+			OutputDebugStringA(ex.what());
+			DebugBreak();
+		}
 	}
-	static inline void backward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs) restrict(amp) {
-		// TODO
+
+	inline module_linear(network* nn, concurrency::extent<1> extent, tensor_view<> input)
+		: module_function(nn, extent, { input })
+		, m_weights(nn, tensor_type_weight, concurrency::extent<2>(extent[0], module_function::extent({ input })[0]))
+		, m_bias(nn, tensor_type_weight, extent) { }
+
+	static inline void forward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp) {
+		table_view<> input = inputs[0];
+
+		// Initial bias
+		float acc = state.bias.m_value[idx];
+
+		// Matrix-vector multiplication
+		for (int i = 0; i < state.weights.m_value.extent[1]; ++i) {
+			index<2> idx2(idx[0], i);
+			acc += state.weights.m_value[idx2] * input.m_value[i];
+		}
+		output.m_value[idx] = acc;
+	}
+	static inline void backwardBias(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp) {
+		state.bias.m_gradient[idx] += output.m_gradient[idx];
+	}
+	static inline void backward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp) {
+		table_view<> input = inputs[0];
+
+		float acc = 0.0f;
+		float value = input.m_value[idx];
+
+		// Matrix-vector multiplication
+		for (int i = 0; i < state.weights.m_gradient.extent[0]; ++i) {
+			index<2> idx2(i, idx[0]);
+
+			float gradient = output.m_gradient[i];
+
+			acc += state.weights.m_value[idx2] * gradient;
+
+			// Update weight gradient
+			state.weights.m_gradient[idx2] += gradient * value;
+		}
+		input.m_gradient[idx] = acc;
+	}
+	static inline void clearGradient(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp) {
+		module_function::clearGradient(idx, output, inputs, module_function::state_t());
+		state.bias.m_gradient[idx] = 0.0f;
+		for (int i = 0; i < state.weights.m_gradient.extent[1]; ++i) {
+			index<2> idx2(idx[0], i);
+			state.weights.m_gradient[idx2] = 0.0f;
+		}
+	}
+
+	inline state_t getState() {
+		return state_t{ m_weights.view(), m_bias.view() };
 	}
 };
 
