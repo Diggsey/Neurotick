@@ -19,6 +19,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <array>
+#include <random>
 #include <amp.h>
 #include <amp_math.h>
 #include <boost/preprocessor/repeat.hpp>

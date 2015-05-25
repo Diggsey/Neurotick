@@ -50,10 +50,14 @@ int main(int argc, char* argv[])
 
 	auto a = nn.make<module_input>(size);
 	auto b = nn.make<module_add<2>>(make_array( a->getOutput(), a->getOutput() ));
-	auto c = nn.make<module_div>(make_array( b->getOutput(), a->getOutput() ));
-	auto d = nn.make<module_linear>(size, c->getOutput());
+	auto c = nn.make<module_div>(b->getOutput(), a->getOutput());
+	auto d = nn.make<module_rcp>(c->getOutput());
+	auto e = nn.make<module_linear>(size, d->getOutput());
 
 	nn.compile();
+
+	auto weights = nn.getTensorView(tensor_type_weight);
+	cpuFill(weights.m_value, uniformRandom(-0.08f, 0.08f));
 
 	array<float, 1> data(size, boost::make_counting_iterator(1.0f));
 
@@ -65,6 +69,7 @@ int main(int argc, char* argv[])
 	printArray(b->getOutput().view().m_value);
 	printArray(c->getOutput().view().m_value);
 	printArray(d->getOutput().view().m_value);
+	printArray(e->getOutput().view().m_value);
 
 	getchar();
 	return 0;

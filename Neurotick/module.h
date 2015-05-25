@@ -154,7 +154,7 @@ public:
 template<typename S>
 class module_unary : public module_scalar<1, S> {
 public:
-	using module_scalar::module_scalar;
+	inline module_unary(network* nn, tensor_view<> input) : module_scalar(nn, make_array(input)){ }
 
 	static inline void forward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp) {
 		output.m_value[idx] = S::op(inputs[0].m_value[idx]);
@@ -162,6 +162,12 @@ public:
 	static inline void backward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp) {
 		inputs[0].m_gradient[idx] += output.m_gradient[idx] * S::dop(output.m_value[idx], inputs[0].m_value[idx]);
 	}
+};
+
+template<typename S>
+class module_binary : public module_scalar<2, S> {
+public:
+	inline module_binary(network* nn, tensor_view<> input1, tensor_view<> input2) : module_scalar(nn, make_array(input1, input2)) { }
 };
 
 template<int N = 2>
@@ -183,9 +189,9 @@ public:
 	}
 };
 
-class module_sub : public module_scalar<2, module_sub> {
+class module_sub : public module_binary<module_sub> {
 public:
-	using module_scalar::module_scalar;
+	using module_binary::module_binary;
 
 	static inline float identity() restrict(amp) {
 		return 0.0f;
@@ -231,9 +237,9 @@ public:
 	}
 };
 
-class module_div : public module_scalar<2, module_div> {
+class module_div : public module_binary<module_div> {
 public:
-	using module_scalar::module_scalar;
+	using module_binary::module_binary;
 
 	static inline float identity() restrict(amp) {
 		return 1.0f;

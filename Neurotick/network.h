@@ -3,7 +3,7 @@
 class linear_tensor_allocator {
 private:
 	std::vector<tensor_base*> m_tensors;
-	std::unique_ptr<table<1>> m_table;
+	std::unique_ptr<table<>> m_table;
 
 public:
 	void registerTensor(tensor_base* tensor) {
@@ -28,6 +28,9 @@ public:
 				offset += size;
 			}
 		}
+	}
+	table_view<> view() {
+		return table_view<>(*m_table);
 	}
 };
 
@@ -71,5 +74,8 @@ public:
 	}
 	inline void registerTensor(tensor_type type, tensor_base* tensor) {
 		m_tensorAllocators[type].registerTensor(tensor);
+	}
+	inline table_view<> getTensorView(tensor_type type) {
+		return m_tensorAllocators[type].view();
 	}
 };

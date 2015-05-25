@@ -1,10 +1,36 @@
 #pragma once
 
 template<typename T, int Rank>
-void fill(array<T, Rank>& arr, T initValue) {
-	parallel_for_each(arr.extent, [&arr, initValue](index<Rank> idx) restrict(amp) {
+void fill(array_view<T, Rank> arr, T initValue) {
+	parallel_for_each(arr.extent, [=](index<Rank> idx) restrict(amp) {
 		arr[idx] = initValue;
 	});
+}
+template<typename T, int Rank, typename F>
+void fill(array_view<T, Rank> arr, F&& f) {
+	parallel_for_each(arr.extent, std::forward<F>(f));
+}
+template<typename T, int Rank, typename F>
+void cpuFill(array_view<T, Rank> arr, F&& f) {
+	unsigned size = arr.extent.size();
+	for (unsigned i = 0; i < size; ++i) {
+		index<Rank> idx;
+		unsigned j = i;
+		for (int k = Rank-1; k >= 0; --k) {
+			unsigned e = arr.extent[k];
+			idx[k] = j % e;
+			j = j / e;
+		}
+		arr[idx] = f(idx);
+	}
+	arr.synchronize();
+}
+auto uniformRandom(float minv, float maxv) {
+	std::default_random_engine generator;
+	std::uniform_real_distribution<float> dist(minv, maxv);
+	return [=](auto idx) mutable {
+		return dist(generator);
+	};
 }
 
 void printArray(array_view<float, 1> view) {
@@ -12,7 +38,7 @@ void printArray(array_view<float, 1> view) {
 	array_view<float, 1> temp(view.extent);
 	view.copy_to(temp);
 	for (int i = 0; i < temp.extent[0]; ++i)
-		std::cout << std::setw(8) << temp[i];
+		std::cout << std::setw(9) << std::setprecision(3) << temp[i];
 	std::cout << std::endl;
 }
 
