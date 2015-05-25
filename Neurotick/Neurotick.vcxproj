@@ -81,9 +81,6 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <Text Include="ReadMe.txt" />
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="fixed_array.h" />
     <ClInclude Include="module.h" />
     <ClInclude Include="network.h" />
