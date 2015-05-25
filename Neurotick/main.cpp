@@ -2,14 +2,7 @@
 //
 
 #include "stdafx.h"
-
-class network;
-
-#include "fixed_array.h"
-#include "range_loop.h"
-#include "tensor.h"
-#include "module.h"
-#include "network.h"
+#include "neurotick.h"
 
 struct rms_config {
 	float learningRate = 1e-2f;
@@ -54,22 +47,23 @@ int main(int argc, char* argv[])
 	auto d = nn.make<module_rcp>(c->getOutput());
 	auto e = nn.make<module_linear>(size, d->getOutput());
 
-	nn.compile();
+	batch_evaluator evaluator(&nn);
 
+	/*
 	auto weights = nn.getTensorView(tensor_type_weight);
 	cpuFill(weights.m_value, uniformRandom(-0.08f, 0.08f));
-
+	*/
 	array<float, 1> data(size, boost::make_counting_iterator(1.0f));
 
-	a->setValue(data);
-	nn.updateOutput();
-	nn.updateGradInput();
+	a->setValue(evaluator[0], data);
+	nn.updateOutput(evaluator[0]);
+	nn.updateGradInput(evaluator[0]);
 
-	printArray(a->getOutput().view().m_value);
-	printArray(b->getOutput().view().m_value);
-	printArray(c->getOutput().view().m_value);
-	printArray(d->getOutput().view().m_value);
-	printArray(e->getOutput().view().m_value);
+	printArray(a->getOutput().view(evaluator[0]).m_value);
+	printArray(b->getOutput().view(evaluator[0]).m_value);
+	printArray(c->getOutput().view(evaluator[0]).m_value);
+	printArray(d->getOutput().view(evaluator[0]).m_value);
+	printArray(e->getOutput().view(evaluator[0]).m_value);
 
 	getchar();
 	return 0;

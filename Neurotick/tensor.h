@@ -69,7 +69,6 @@ public:
 	}
 };
 
-
 enum tensor_type {
 	tensor_type_transient = 0,
 	tensor_type_state,
@@ -77,31 +76,35 @@ enum tensor_type {
 	tensor_type_count
 };
 
-class tensor_base {
+class state_provider {
 public:
-	virtual unsigned size() = 0;
-	virtual void setSource(table_view<1> source) = 0;
+	virtual table_view<> getTensorView(tensor_type type, index<1> offset, extent<1> size) const = 0;
+	virtual table_view<> getNextState(index<1> offset, extent<1> size) const = 0;
 };
-template<int N = 1> class tensor : public tensor_base {
+
+template<int N = 1> class tensor {
 private:
-	boost::optional<table_view<N>> m_data;
+	tensor_type m_type;
 	extent<N> m_extent;
+	index<1> m_offset;
 
 public:
-	tensor(network* nn, tensor_type type, extent<N> extent) : m_data(), m_extent(extent) {
-		nn->registerTensor(type, this);
+	tensor(network* nn, tensor_type type, extent<N> extent) : m_type(type), m_extent(extent), m_offset(nn->allocateTensor(type, extent.size())) {
 	}
-	virtual unsigned size() {
+	inline unsigned size() {
 		return m_extent.size();
-	}
-	virtual void setSource(table_view<1> source) {
-		m_data = source.view_as(m_extent);
 	}
 	inline extent<N> extent() {
 		return m_extent;
 	}
-	inline table_view<N> view() {
-		return *m_data;
+	inline table_view<N> view(state_provider const& stateProvider) {
+		return stateProvider.getTensorView(m_type, m_offset, concurrency::extent<1>(size())).view_as(m_extent);
+	}
+	inline table_view<N> nextView(state_provider const& stateProvider) {
+		if (m_type == tensor_type_state)
+			return stateProvider.getNextState(m_offset, concurrency::extent<1>(size())).view_as(m_extent);
+		else
+			throw "Invalid tensor type";
 	}
 };
 template<int N = 1> class tensor_view {
@@ -114,7 +117,10 @@ public:
 	inline extent<N> extent() const {
 		return m_tensor->extent();
 	}
-	inline table_view<N> view() const {
-		return m_tensor->view();
+	inline table_view<N> view(state_provider const& stateProvider) const {
+		return m_tensor->view(stateProvider);
+	}
+	inline table_view<N> nextView(state_provider const& stateProvider) const {
+		return m_tensor->nextView(stateProvider);
 	}
 };
