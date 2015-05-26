@@ -120,6 +120,8 @@ private:
 
 public:
 	tensor_view(tensor<N>& tensor) : m_tensor(&tensor) { }
+	template<typename T>
+	tensor_view(T* module) : m_tensor(tensor_view<N>(module->getOutput()).m_tensor) { }
 
 	inline extent<N> extent() const {
 		return m_tensor->extent();

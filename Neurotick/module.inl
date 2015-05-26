@@ -1,5 +1,4 @@
 #pragma once
-#pragma once
 
 // module
 module::module(network* nn) : m_network(nn) { }
@@ -15,6 +14,12 @@ module_function<N, S>::module_function(network* nn, concurrency::extent<1> exten
 template<int N, typename S>
 module_function<N, S>::module_function(network* nn, std::array<tensor_view<>, N> inputs)
 	: module(nn), m_output(nn, tensor_type_transient, S::extent(inputs)), m_inputs(inputs) { }
+template<int N, typename S>
+module_function<N, S>::module_function(network* nn, tensor_view<> input)
+	: module(nn), m_output(nn, tensor_type_transient, S::extent({ tensor_view<>(input) })), m_inputs({ tensor_view<>(input) }) { }
+template<int N, typename S>
+module_function<N, S>::module_function(network* nn, tensor_view<> input1, tensor_view<> input2)
+	: module(nn), m_output(nn, tensor_type_transient, S::extent({ tensor_view<>(input1), tensor_view<>(input2) })), m_inputs({ tensor_view<>(input1), tensor_view<>(input2) }) { }
 
 template<int N, typename S>
 void module_function<N, S>::updateOutput(state_provider const& stateProvider) {
@@ -430,7 +435,7 @@ tensor_view<> module_input::getOutput() {
 }
 
 // module_state
-module_state::module_state(network* nn, concurrency::extent<1> extent, tensor_view<> input) : module(nn), m_output(nn, tensor_type_state, extent), m_hasInput(false) { }
+module_state::module_state(network* nn, concurrency::extent<1> extent) : module(nn), m_output(nn, tensor_type_state, extent), m_hasInput(false) { }
 
 void module_state::updateOutput(state_provider const& stateProvider) {
 	if (!m_hasInput)
@@ -489,5 +494,45 @@ void module_container<N, S>::updateGradInput(state_provider const& stateProvider
 }
 
 // module_lstm
-fixed_array<table_view<>, 1> module_lstm::build(network* nn, extent<1> extent, tensor_view<> input) {
+std::array<tensor_view<>, 1> module_lstm::build(network* nn, extent<1> extent, tensor_view<> input) {
+	auto internalState = nn->make<module_state>(extent);
+	auto outputState = nn->make<module_state>(extent);
+
+	// Prepare inputs for the four gates
+	module_add<>* inputs[4];
+	for (int i = 0; i < 4; ++i) {
+		// Feed in the current input, and the previous output
+		auto inputA = nn->make<module_linear>(extent, input);
+		auto inputB = nn->make<module_linear>(extent, outputState);
+		inputs[i] = nn->make<module_add<>>(inputA, inputB);
+	}
+
+	auto inGate = nn->make<module_sigmoid>(inputs[0]);
+	auto forgetGate = nn->make<module_sigmoid>(inputs[1]);
+	auto outGate = nn->make<module_sigmoid>(inputs[2]);
+	auto inTransform = nn->make<module_tanh>(inputs[3]);
+
+	auto nextValue = nn->make<module_add<>>(
+		nn->make<module_mul<>>(internalState, forgetGate),
+		nn->make<module_mul<>>(inGate, inTransform)
+	);
+
+	auto nextOutput = nn->make<module_mul<>>(
+		outGate,
+		nn->make<module_tanh>(nextValue)
+	);
+
+	internalState->setInput(nextValue);
+	outputState->setInput(nextOutput);
+
+	return{ nextOutput };
+}
+
+// module_softmax
+std::array<tensor_view<>, 1> module_softmax::build(network* nn, extent<1> extent, tensor_view<> input) {
+	return{
+		nn->make<module_log_soft_max>(
+			nn->make<module_linear>(extent, input)
+		)
+	};
 }

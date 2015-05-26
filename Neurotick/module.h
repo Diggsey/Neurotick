@@ -25,6 +25,8 @@ public:
 	struct state_t {};
 
 	inline module_function(network* nn, std::array<tensor_view<>, N> inputs);
+	inline module_function(network* nn, tensor_view<> input);
+	inline module_function(network* nn, tensor_view<> input1, tensor_view<> input2);
 
 	virtual inline void updateOutput(state_provider const& stateProvider);
 	virtual inline void updateGradInput(state_provider const& stateProvider);
@@ -187,7 +189,7 @@ protected:
 	tensor<> m_output;
 	bool m_hasInput;
 public:
-	inline module_state(network* nn, concurrency::extent<1> extent, tensor_view<> input);
+	inline module_state(network* nn, concurrency::extent<1> extent);
 
 	virtual inline void updateOutput(state_provider const& stateProvider);
 	virtual inline void updateGradInput(state_provider const& stateProvider);
@@ -222,5 +224,12 @@ class module_lstm : public module_container<1, module_lstm> {
 public:
 	using module_container::module_container;
 
-	static inline fixed_array<table_view<>, 1> build(network* nn, extent<1> extent, tensor_view<> input);
+	static inline std::array<tensor_view<>, 1> build(network* nn, extent<1> extent, tensor_view<> input);
+};
+
+class module_softmax : module_container<1, module_lstm> {
+public:
+	using module_container::module_container;
+
+	static inline std::array<tensor_view<>, 1> build(network* nn, extent<1> extent, tensor_view<> input);
 };
