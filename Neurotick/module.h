@@ -154,6 +154,19 @@ public:
 
 	inline state_t getState(state_provider const& stateProvider);
 };
+class module_log_soft_max : public module {
+protected:
+	tensor<> m_output;
+	tensor<> m_scratch;
+	tensor_view<> m_input;
+public:
+	inline module_log_soft_max(network* nn, tensor_view<> input);
+
+	virtual inline void updateOutput(state_provider const& stateProvider);
+	virtual inline void updateGradInput(state_provider const& stateProvider);
+
+	inline tensor_view<> getOutput();
+};
 
 class module_input : public module {
 protected:

@@ -40,9 +40,9 @@ void module_function<N, S>::updateOutput(state_provider const& stateProvider) {
 
 			parallel_for_each(
 				output.extent(),
-				[=](index<1> idx) restrict(amp) {
-				S::clearGradient(idx, output, inputs, state);
-			}
+					[=](index<1> idx) restrict(amp) {
+					S::clearGradient(idx, output, inputs, state);
+				}
 			);
 		}
 
@@ -330,6 +330,88 @@ module_linear::state_t module_linear::getState(state_provider const& stateProvid
 	return state_t{ m_weights.view(stateProvider), m_bias.view(stateProvider) };
 }
 
+// module_log_soft_max
+module_log_soft_max::module_log_soft_max(network* nn, tensor_view<> input)
+	: module(nn), m_output(nn, tensor_type_transient, input.extent()), m_scratch(nn, tensor_type_transient, input.extent()), m_input(input) { }
+
+void module_log_soft_max::updateOutput(state_provider const& stateProvider) {
+	table_view<> input = m_input.view(stateProvider);
+	table_view<> scratch = m_scratch.view(stateProvider);
+	table_view<> output = m_output.view(stateProvider);
+
+	try {
+		// Update outputs
+		output.m_value.discard_data();
+
+		float maxInput = reduce(input.m_value, -std::numeric_limits<float>::infinity(), [=](float a, float b) restrict(amp, cpu) {
+			return (a > b) ? a : b;
+		});
+
+		parallel_for_each(
+			output.extent(),
+			[=](index<1> idx) restrict(amp) {
+				scratch.m_value[idx] = fast_math::expf(input.m_value[idx] - maxInput);
+			}
+		);
+
+		float logSum = reduce(scratch.m_value, 0.0f, [=](float a, float b) restrict(amp, cpu) {
+			return a + b;
+		});
+
+		logSum = maxInput + logf(logSum);
+
+		parallel_for_each(
+			output.extent(),
+			[=](index<1> idx) restrict(amp) {
+				output.m_value[idx] = input.m_value[idx] - logSum;
+			}
+		);
+
+		if (m_network->getIsLearning()) {
+			// Clear gradients
+			input.m_gradient.discard_data();
+			scratch.m_gradient.discard_data();
+
+			parallel_for_each(
+				output.extent(),
+				[=](index<1> idx) restrict(amp) {
+					input.m_gradient[idx] = 0.0f;
+					scratch.m_gradient[idx] = 0.0f;
+				}
+			);
+		}
+
+	} catch (concurrency::runtime_exception& ex) {
+		OutputDebugStringA(ex.what());
+		DebugBreak();
+	}
+}
+void module_log_soft_max::updateGradInput(state_provider const& stateProvider) {
+	table_view<> input = m_input.view(stateProvider);
+	table_view<> scratch = m_scratch.view(stateProvider);
+	table_view<> output = m_output.view(stateProvider);
+
+	try {
+		float sum = reduce(output.m_gradient, 0.0f, [=](float a, float b) restrict(amp, cpu) {
+			return a + b;
+		});
+
+		parallel_for_each(
+			output.extent(),
+			[=](index<1> idx) restrict(amp) {
+				input.m_gradient[idx] += output.m_gradient[idx] - sum*fast_math::expf(output.m_value[idx]);
+			}
+		);
+	} catch (concurrency::runtime_exception& ex) {
+		OutputDebugStringA(ex.what());
+		DebugBreak();
+	}
+}
+
+tensor_view<> module_log_soft_max::getOutput() {
+	return m_output;
+}
+
 // module_input
 module_input::module_input(network* nn, extent<1> extent) : module(nn), m_output(nn, tensor_type_transient, extent) { }
 
@@ -379,7 +461,20 @@ void module_state_input::updateOutput(state_provider const& stateProvider) {
 }
 void module_state_input::updateGradInput(state_provider const& stateProvider) {
 	// Propagate gradient back from next state
-	m_state.nextView(stateProvider).m_gradient.copy_to(m_input.view(stateProvider).m_gradient);
+	table_view<> input = m_input.view(stateProvider);
+	table_view<> nextState = m_state.nextView(stateProvider);
+
+	try {
+		parallel_for_each(
+			nextState.extent(),
+			[=](index<1> idx) restrict(amp) {
+				input.m_gradient[idx] += nextState.m_gradient[idx];
+			}
+		);
+	} catch (concurrency::runtime_exception& ex) {
+		OutputDebugStringA(ex.what());
+		DebugBreak();
+	}
 }
 
 // module_container

@@ -70,6 +70,7 @@ public:
 	virtual table_view<> getTensorView(tensor_type type, index<1> offset, extent<1> size) const;
 	virtual table_view<> getNextState(index<1> offset, extent<1> size) const;
 };
+
 class batch_evaluator {
 protected:
 	network* m_nn;
@@ -112,7 +113,18 @@ public:
 		return batch_evaluator_state_provider(this, idx);
 	}
 	table_view<> evaluate() {
+		auto weights = getView(0, tensor_type_weight);
+		float loss = 0.0f;
 
+		if (weights.is_initialized())
+			fill(weights->m_gradient, 0.0f);
+		
+		for (int i = 0; i < (int)m_batchSize; ++i) {
+			m_nn->updateOutput((*this)[i]);
+		}
+		for (int i = (int)m_batchSize-1; i >= 0; --i) {
+			m_nn->updateGradInput((*this)[i]);
+		}
 	}
 };
 

@@ -32,6 +32,13 @@ auto uniformRandom(float minv, float maxv) {
 		return dist(generator);
 	};
 }
+template<typename T, typename U, typename F>
+U reduce(array_view<T, 1> arr, U acc, F&& f) {
+	for (int i = 0; i < arr.extent[0]; ++i) {
+		acc = f(acc, arr[i]);
+	}
+	return acc;
+}
 
 void printArray(array_view<float, 1> view) {
 	view.refresh();
