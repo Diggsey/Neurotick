@@ -33,7 +33,7 @@ auto uniformRandom(float minv, float maxv) {
 	};
 }
 template<typename T, typename U, typename F>
-U reduce(array_view<T, 1> arr, U acc, F&& f) {
+U reduce(array_view<T, 1> arr, U acc, F&& f) restrict(cpu, amp) {
 	for (int i = 0; i < arr.extent[0]; ++i) {
 		acc = f(acc, arr[i]);
 	}
@@ -41,11 +41,16 @@ U reduce(array_view<T, 1> arr, U acc, F&& f) {
 }
 
 void printArray(array_view<float, 1> view) {
-	view.refresh();
-	array_view<float, 1> temp(view.extent);
-	view.copy_to(temp);
-	for (int i = 0; i < temp.extent[0]; ++i)
-		std::cout << std::setw(9) << std::setprecision(3) << temp[i];
+	for (int i = 0; i < view.extent[0]; ++i)
+		std::cout << std::setw(9) << std::setprecision(3) << view[i];
+	std::cout << std::endl;
+}
+
+template<int N>
+void printArray(array_view<float, N> view) {
+	for (int i = 0; i < view.extent[0]; ++i) {
+		printArray(view[i]);
+	}
 	std::cout << std::endl;
 }
 
@@ -66,7 +71,7 @@ public:
 
 	inline table_view(table<N>& src) : m_value(src.m_value), m_gradient(src.m_gradient) { }
 	inline table_view(array_view<float, N> value, array_view<float, N> gradient) : m_value(value), m_gradient(gradient) { }
-	inline extent<N> extent() const { return m_value.extent; }
+	inline extent<N> extent() const restrict(amp, cpu) { return m_value.extent; }
 	template<int M>
 	table_view<M> view_as(concurrency::extent<M> extent) {
 		return table_view<M>(m_value.view_as(extent), m_gradient.view_as(extent));

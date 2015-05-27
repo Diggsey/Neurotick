@@ -35,13 +35,25 @@ public:
 	}
 };
 
+template<int N, int M> extent<N + M> operator*(extent<N> const& a, extent<M> const& b) {
+	extent<N + M> result;
+	for (int i = 0; i < N; ++i) {
+		result[i] = a[i];
+	}
+	for (int i = 0; i < M; ++i) {
+		result[i + N] = b[i];
+	}
+	return result;
+}
+
 int main(int argc, char* argv[])
 {
 	network nn;
 
+	extent<1> batchSize(16);
 	extent<1> size(8);
 
-	auto a = nn.make<module_input>(size);
+	auto a = nn.make<module_input>(batchSize*size);
 	auto b = nn.make<module_add<2>>(make_array( a->getOutput(), a->getOutput() ));
 	auto c = nn.make<module_div>(b->getOutput(), a->getOutput());
 	auto d = nn.make<module_rcp>(c->getOutput());
@@ -53,7 +65,7 @@ int main(int argc, char* argv[])
 	auto weights = nn.getTensorView(tensor_type_weight);
 	cpuFill(weights.m_value, uniformRandom(-0.08f, 0.08f));
 	*/
-	array<float, 1> data(size, boost::make_counting_iterator(1.0f));
+	array<float, 2> data(batchSize*size, boost::make_counting_iterator(1.0f));
 
 	a->setValue(evaluator[0], data);
 	nn.updateOutput(evaluator[0]);

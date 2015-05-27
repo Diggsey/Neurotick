@@ -16,25 +16,25 @@ public:
 template<int N, typename S>
 class module_function : public module {
 protected:
-	tensor<> m_output;
-	std::array<tensor_view<>, N> m_inputs;
+	tensor<2> m_output;
+	std::array<tensor_view<2>, N> m_inputs;
 
-	inline module_function(network* nn, extent<1> extent, std::array<tensor_view<>, N> inputs);
+	inline module_function(network* nn, extent<2> extent, std::array<tensor_view<2>, N> inputs);
 
 public:
 	struct state_t {};
 
-	inline module_function(network* nn, std::array<tensor_view<>, N> inputs);
-	inline module_function(network* nn, tensor_view<> input);
-	inline module_function(network* nn, tensor_view<> input1, tensor_view<> input2);
+	inline module_function(network* nn, std::array<tensor_view<2>, N> inputs);
+	inline module_function(network* nn, tensor_view<2> input);
+	inline module_function(network* nn, tensor_view<2> input1, tensor_view<2> input2);
 
 	virtual inline void updateOutput(state_provider const& stateProvider);
 	virtual inline void updateGradInput(state_provider const& stateProvider);
 
-	inline tensor_view<> getOutput();
+	inline tensor_view<2> getOutput();
 	inline state_t getState(state_provider const& stateProvider);
-	static inline void clearGradient(index<1> idx, table_view<> const& output, fixed_array<table_view<>, N> const& inputs, state_t state) restrict(amp);
-	static inline extent<1> extent(std::array<tensor_view<>, N> inputs);
+	static inline void clearGradient(index<2> idx, table_view<2> const& output, fixed_array<table_view<2>, N> const& inputs, state_t state) restrict(amp);
+	static inline extent<2> extent(std::array<tensor_view<2>, N> inputs);
 };
 
 // Base class for modules of the form `foldl <op> [inputs...]`,
@@ -45,24 +45,24 @@ public:
 	using module_function::module_function;
 
 	template<bool unused = false>
-	static inline void forward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, N> const& inputs, state_t state) restrict(amp);
+	static inline void forward(index<2> idx, table_view<2> const& output, fixed_array<table_view<2>, N> const& inputs, state_t state) restrict(amp);
 	template<bool unused = false>
-	static inline void backward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, N> const& inputs, state_t state) restrict(amp);
+	static inline void backward(index<2> idx, table_view<2> const& output, fixed_array<table_view<2>, N> const& inputs, state_t state) restrict(amp);
 };
 
 template<typename S>
 class module_unary : public module_scalar<1, S> {
 public:
-	inline module_unary(network* nn, tensor_view<> input);
+	inline module_unary(network* nn, tensor_view<2> input);
 
-	static inline void forward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp);
-	static inline void backward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp);
+	static inline void forward(index<2> idx, table_view<2> const& output, fixed_array<table_view<2>, 1> const& inputs, state_t state) restrict(amp);
+	static inline void backward(index<2> idx, table_view<2> const& output, fixed_array<table_view<2>, 1> const& inputs, state_t state) restrict(amp);
 };
 
 template<typename S>
 class module_binary : public module_scalar<2, S> {
 public:
-	inline module_binary(network* nn, tensor_view<> input1, tensor_view<> input2);
+	inline module_binary(network* nn, tensor_view<2> input1, tensor_view<2> input2);
 };
 
 template<int N = 2>
@@ -147,72 +147,74 @@ public:
 	// The gradients need to be calculated in the other direction from the outputs
 	virtual inline void updateGradInput(state_provider const& stateProvider);
 
-	inline module_linear(network* nn, concurrency::extent<1> extent, tensor_view<> input);
+	inline module_linear(network* nn, concurrency::extent<1> extent, tensor_view<2> input);
 
-	static inline void forward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp);
-	static inline void backwardBias(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp);
-	static inline void backward(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp);
-	static inline void clearGradient(index<1> idx, table_view<> const& output, fixed_array<table_view<>, 1> const& inputs, state_t state) restrict(amp);
+	static inline void forward(index<2> idx, table_view<2> const& output, fixed_array<table_view<2>, 1> const& inputs, state_t state) restrict(amp);
+	static inline void backwardBias(index<1> idx, table_view<2> const& output, fixed_array<table_view<2>, 1> const& inputs, state_t state) restrict(amp);
+	static inline void backwardWeights(index<2> idx, table_view<2> const& output, fixed_array<table_view<2>, 1> const& inputs, state_t state) restrict(amp);
+	static inline void backward(index<2> idx, table_view<2> const& output, fixed_array<table_view<2>, 1> const& inputs, state_t state) restrict(amp);
+	static inline void clearGradient(index<2> idx, table_view<2> const& output, fixed_array<table_view<2>, 1> const& inputs, state_t state) restrict(amp);
 
 	inline state_t getState(state_provider const& stateProvider);
 };
 class module_log_soft_max : public module {
 protected:
-	tensor<> m_output;
-	tensor<> m_scratch;
-	tensor_view<> m_input;
+	tensor<2> m_output;
+	tensor<2> m_scratch;
+	tensor<1> m_maxInput;
+	tensor_view<2> m_input;
 public:
-	inline module_log_soft_max(network* nn, tensor_view<> input);
+	inline module_log_soft_max(network* nn, tensor_view<2> input);
 
 	virtual inline void updateOutput(state_provider const& stateProvider);
 	virtual inline void updateGradInput(state_provider const& stateProvider);
 
-	inline tensor_view<> getOutput();
+	inline tensor_view<2> getOutput();
 };
 
 class module_input : public module {
 protected:
-	tensor<> m_output;
+	tensor<2> m_output;
 public:
-	inline module_input(network* nn, extent<1> extent);
+	inline module_input(network* nn, extent<2> extent);
 
 	virtual inline void updateOutput(state_provider const& stateProvider);
 	virtual inline void updateGradInput(state_provider const& stateProvider);
 
-	inline void setValue(state_provider const& stateProvider, array_view<float, 1> value);
-	inline tensor_view<> getOutput();
+	inline void setValue(state_provider const& stateProvider, array_view<float, 2> value);
+	inline tensor_view<2> getOutput();
 };
 
 class module_state : public module {
 	friend class module_state_input;
 protected:
-	tensor<> m_output;
+	tensor<2> m_output;
 	bool m_hasInput;
 public:
-	inline module_state(network* nn, concurrency::extent<1> extent);
+	inline module_state(network* nn, concurrency::extent<2> extent);
 
 	virtual inline void updateOutput(state_provider const& stateProvider);
 	virtual inline void updateGradInput(state_provider const& stateProvider);
 
-	inline tensor_view<> getOutput();
-	inline void setInput(tensor_view<> input);
+	inline tensor_view<2> getOutput();
+	inline void setInput(tensor_view<2> input);
 };
 
 class module_state_input : public module {
 protected:
-	tensor_view<> m_state;
-	tensor_view<> m_input;
+	tensor_view<2> m_state;
+	tensor_view<2> m_input;
 public:
-	inline module_state_input(network* nn, module_state* state, tensor_view<> input);
+	inline module_state_input(network* nn, module_state* state, tensor_view<2> input);
 
 	virtual inline void updateOutput(state_provider const& stateProvider);
 	virtual inline void updateGradInput(state_provider const& stateProvider);
 };
 
-template<int N, typename S>
+template<int N, int M, typename S>
 class module_container : public module {
 protected:
-	std::array<tensor_view<>, N> m_outputs;
+	std::array<tensor_view<M>, N> m_outputs;
 public:
 	template<typename... P>
 	inline module_container(network* nn, P&&... p);
@@ -220,16 +222,16 @@ public:
 	virtual inline void updateGradInput(state_provider const& stateProvider);
 };
 
-class module_lstm : public module_container<1, module_lstm> {
+class module_lstm : public module_container<1, 2, module_lstm> {
 public:
 	using module_container::module_container;
 
-	static inline std::array<tensor_view<>, 1> build(network* nn, extent<1> extent, tensor_view<> input);
+	static inline std::array<tensor_view<2>, 1> build(network* nn, extent<1> extent, tensor_view<2> input);
 };
 
-class module_softmax : module_container<1, module_lstm> {
+class module_softmax : module_container<1, 2, module_lstm> {
 public:
 	using module_container::module_container;
 
-	static inline std::array<tensor_view<>, 1> build(network* nn, extent<1> extent, tensor_view<> input);
+	static inline std::array<tensor_view<2>, 1> build(network* nn, extent<1> extent, tensor_view<2> input);
 };
