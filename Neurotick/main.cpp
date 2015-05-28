@@ -59,7 +59,7 @@ int main(int argc, char* argv[])
 	auto d = nn.make<module_rcp>(c->getOutput());
 	auto e = nn.make<module_linear>(size, d->getOutput());
 
-	batch_evaluator evaluator(&nn);
+	sequence_evaluator evaluator(&nn);
 
 	/*
 	auto weights = nn.getTensorView(tensor_type_weight);

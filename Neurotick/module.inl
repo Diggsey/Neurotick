@@ -479,7 +479,70 @@ void module_input::setValue(state_provider const& stateProvider, array_view<floa
 		throw "Extent mismatch";
 	value.copy_to(m_output.view(stateProvider).m_value);
 }
+void module_input::getGradient(state_provider const& stateProvider, array_view<float, 2> gradient) {
+	if (gradient.extent != m_output.extent())
+		throw "Extent mismatch";
+	m_output.view(stateProvider).m_gradient.copy_to(gradient);
+}
 tensor_view<2> module_input::getOutput() {
+	return tensor_view<2>(m_output);
+}
+
+// module_class_embedding
+module_class_embedding::module_class_embedding(network* nn, unsigned numClasses, extent<2> extent)
+	: module(nn), m_output(nn, tensor_type_transient, extent), m_weights(nn, tensor_type_weight, concurrency::extent<2>(numClasses, extent[1])), m_input(nn, concurrency::extent<1>(numClasses)) { }
+
+void module_class_embedding::updateOutput(state_provider const& stateProvider) {
+	array_view<int, 1> input = m_input.view(stateProvider);
+	table_view<2> output = m_output.view(stateProvider);
+	table_view<2> weights = m_weights.view(stateProvider);
+	
+	try {
+		parallel_for_each(
+			output.extent(),
+			[=](index<2> idx) restrict(amp) {
+				int classIndex = input[idx[0]];
+				index<2> idx2(classIndex, idx[1]);
+				output.m_value[idx] = weights.m_value[idx2];
+			}
+		);
+	} catch (concurrency::runtime_exception& ex) {
+		OutputDebugStringA(ex.what());
+		DebugBreak();
+	}
+}
+void module_class_embedding::updateGradInput(state_provider const& stateProvider) {
+	array_view<int, 1> input = m_input.view(stateProvider);
+	table_view<2> output = m_output.view(stateProvider);
+	table_view<2> weights = m_weights.view(stateProvider);
+
+	try {
+		parallel_for_each(
+			weights.extent(),
+			[=](index<2> idx) restrict(amp) {
+				float acc = 0.0f;
+				for (int i = 0; i < output.extent()[0]; ++i) {
+					if (idx[0] == input[i]) {
+						index<2> idx2(i, idx[1]);
+						acc += output.m_gradient[idx2];
+					}
+				}
+				
+				weights.m_gradient[idx] += acc;
+			}
+		);
+	} catch (concurrency::runtime_exception& ex) {
+		OutputDebugStringA(ex.what());
+		DebugBreak();
+	}
+}
+
+void module_class_embedding::setInput(state_provider const& stateProvider, array_view<int, 1> classes) {
+	if (classes.extent[0] != m_output.extent()[0])
+		throw "Extent mismatch";
+	classes.copy_to(m_input.view(stateProvider));
+}
+tensor_view<2> module_class_embedding::getOutput() {
 	return tensor_view<2>(m_output);
 }
 

@@ -182,6 +182,22 @@ public:
 	virtual inline void updateGradInput(state_provider const& stateProvider);
 
 	inline void setValue(state_provider const& stateProvider, array_view<float, 2> value);
+	inline void getGradient(state_provider const& stateProvider, array_view<float, 2> gradient);
+	inline tensor_view<2> getOutput();
+};
+
+class module_class_embedding : public module {
+protected:
+	tensor<2> m_output;
+	tensor<2> m_weights;
+	buffer<int> m_input;
+public:
+	inline module_class_embedding(network* nn, unsigned numClasses, extent<2> extent);
+
+	virtual inline void updateOutput(state_provider const& stateProvider);
+	virtual inline void updateGradInput(state_provider const& stateProvider);
+
+	inline void setInput(state_provider const& stateProvider, array_view<int, 1> classes);
 	inline tensor_view<2> getOutput();
 };
 

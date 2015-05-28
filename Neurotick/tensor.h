@@ -88,10 +88,17 @@ enum tensor_type {
 	tensor_type_count
 };
 
+enum buffer_type {
+	buffer_type_float,
+	buffer_type_int,
+	buffer_type_count
+};
+
 class state_provider {
 public:
 	virtual table_view<> getTensorView(tensor_type type, index<1> offset, extent<1> size) const = 0;
 	virtual table_view<> getNextState(index<1> offset, extent<1> size) const = 0;
+	virtual array_view<int, 1> getBufferView(buffer_type type, index<1> offset, extent<1> size) const = 0;
 };
 
 template<int N = 1> class tensor {
@@ -136,5 +143,52 @@ public:
 	}
 	inline table_view<N> nextView(state_provider const& stateProvider) const {
 		return m_tensor->nextView(stateProvider);
+	}
+};
+
+template<typename T> class get_buffer_type {
+public:
+	static const buffer_type value;
+};
+const buffer_type get_buffer_type<float>::value = buffer_type_float;
+const buffer_type get_buffer_type<int>::value = buffer_type_int;
+
+
+template<typename T, int N = 1> class buffer {
+private:
+	extent<N> m_extent;
+	index<1> m_offset;
+
+public:
+	static const buffer_type bufferType = get_buffer_type<T>::value;
+
+	static inline extent<1> scaledExtent(extent<N> extent) {
+		return concurrency::extent<1>(extent.size() * (sizeof(T) / sizeof(int)));
+	}
+
+	buffer(network* nn, extent<N> extent) : m_extent(extent), m_offset(nn->allocateBuffer(bufferType, scaledExtent(extent)[0])) {
+	}
+	inline unsigned size() {
+		return m_extent.size();
+	}
+	inline extent<N> extent() {
+		return m_extent;
+	}
+	inline array_view<T, N> view(state_provider const& stateProvider) {
+		return stateProvider.getBufferView(bufferType, m_offset, scaledExtent(m_extent)).reinterpret_as<T>().view_as(m_extent);
+	}
+};
+template<typename T, int N = 1> class buffer_view {
+private:
+	buffer<T, N>* m_buffer;
+
+public:
+	buffer_view(buffer<T, N>& buffer) : m_buffer(&buffer) { }
+
+	inline extent<N> extent() const {
+		return m_buffer->extent();
+	}
+	inline array_view<T, N> view(state_provider const& stateProvider) const {
+		return m_buffer->view(stateProvider);
 	}
 };
