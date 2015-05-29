@@ -490,7 +490,7 @@ tensor_view<2> module_input::getOutput() {
 
 // module_class_embedding
 module_class_embedding::module_class_embedding(network* nn, unsigned numClasses, extent<2> extent)
-	: module(nn), m_output(nn, tensor_type_transient, extent), m_weights(nn, tensor_type_weight, concurrency::extent<2>(numClasses, extent[1])), m_input(nn, concurrency::extent<1>(numClasses)) { }
+	: module(nn), m_output(nn, tensor_type_transient, extent), m_weights(nn, tensor_type_weight, concurrency::extent<2>(numClasses, extent[1])), m_input(nn, concurrency::extent<1>(extent[0])) { }
 
 void module_class_embedding::updateOutput(state_provider const& stateProvider) {
 	array_view<int, 1> input = m_input.view(stateProvider);
@@ -502,8 +502,12 @@ void module_class_embedding::updateOutput(state_provider const& stateProvider) {
 			output.extent(),
 			[=](index<2> idx) restrict(amp) {
 				int classIndex = input[idx[0]];
-				index<2> idx2(classIndex, idx[1]);
-				output.m_value[idx] = weights.m_value[idx2];
+				if (classIndex >= 0) {
+					index<2> idx2(classIndex, idx[1]);
+					output.m_value[idx] = weights.m_value[idx2];
+				} else {
+					output.m_value[idx] = 0.0f;
+				}
 			}
 		);
 	} catch (concurrency::runtime_exception& ex) {
@@ -542,6 +546,9 @@ void module_class_embedding::setInput(state_provider const& stateProvider, array
 		throw "Extent mismatch";
 	classes.copy_to(m_input.view(stateProvider));
 }
+inline array_view<int, 1> module_class_embedding::getInput(state_provider const& stateProvider) {
+	return m_input.view(stateProvider);
+}
 tensor_view<2> module_class_embedding::getOutput() {
 	return tensor_view<2>(m_output);
 }
@@ -573,8 +580,22 @@ inline module_state_input::module_state_input(network* nn, module_state* state, 
 }
 
 void module_state_input::updateOutput(state_provider const& stateProvider) {
+	table_view<2> input = m_input.view(stateProvider);
+
 	// Propagate input to next state
-	m_input.view(stateProvider).m_value.copy_to(m_state.nextView(stateProvider).m_value);
+	input.m_value.copy_to(m_state.nextView(stateProvider).m_value);
+
+	if (m_network->getIsLearning()) {
+		// Clear gradients
+		input.m_gradient.discard_data();
+
+		parallel_for_each(
+			input.extent(),
+			[=](index<2> idx) restrict(amp) {
+				input.m_gradient[idx] = 0.0f;
+			}
+		);
+	}
 }
 void module_state_input::updateGradInput(state_provider const& stateProvider) {
 	// Propagate gradient back from next state
@@ -603,6 +624,12 @@ void module_container<N, M, S>::updateOutput(state_provider const& stateProvider
 }
 template<int N, int M, typename S>
 void module_container<N, M, S>::updateGradInput(state_provider const& stateProvider) {
+}
+
+// module_container_function
+template<int M, typename S>
+tensor_view<M> module_container_function<M, S>::getOutput() {
+	return m_outputs[0];
 }
 
 // module_lstm
@@ -649,4 +676,76 @@ std::array<tensor_view<2>, 1> module_softmax::build(network* nn, extent<1> exten
 			nn->make<module_linear>(extent, input)
 		)
 	};
+}
+
+// module_class_nll_criterion
+module_class_nll_criterion::module_class_nll_criterion(network* nn, tensor_view<2> input)
+	: module(nn), m_input(input), m_target(nn, concurrency::extent<1>(input.extent()[0])), m_output(nn, concurrency::extent<1>(input.extent()[0])) { }
+
+void module_class_nll_criterion::updateOutput(state_provider const& stateProvider) {
+	if (m_network->getIsLearning()) {
+		table_view<2> input = m_input.view(stateProvider);
+		array_view<int, 1> target = m_target.view(stateProvider);
+		array_view<float, 1> output = m_output.view(stateProvider);
+
+		try {
+			float scale = 1.0f / output.extent[0];
+
+			parallel_for_each(
+				output.extent,
+				[=](index<1> idx) restrict(amp) {
+					int classIndex = target[idx];
+					index<2> idx2(idx[0], classIndex);
+					float loss = -input.m_value[idx2] * scale;
+					output[idx] = loss;
+				}
+			);
+
+			// Clear gradients
+			input.m_gradient.discard_data();
+
+			parallel_for_each(
+				input.extent(),
+				[=](index<2> idx) restrict(amp) {
+					input.m_gradient[idx] = 0.0f;
+				}
+			);
+		} catch (concurrency::runtime_exception& ex) {
+			OutputDebugStringA(ex.what());
+			DebugBreak();
+		}
+	}
+}
+void module_class_nll_criterion::updateGradInput(state_provider const& stateProvider) {
+	table_view<2> input = m_input.view(stateProvider);
+	array_view<int, 1> target = m_target.view(stateProvider);
+	array_view<float, 1> output = m_output.view(stateProvider);
+
+	try {
+		float scale = 1.0f / output.extent[0];
+
+		parallel_for_each(
+			output.extent,
+			[=](index<1> idx) restrict(amp) {
+				int classIndex = target[idx];
+				index<2> idx2(idx[0], classIndex);
+				input.m_gradient[idx2] -= scale;
+			}
+		);
+	} catch (concurrency::runtime_exception& ex) {
+		OutputDebugStringA(ex.what());
+		DebugBreak();
+	}
+}
+
+void module_class_nll_criterion::setTarget(state_provider const& stateProvider, array_view<int, 1> classes) {
+	if (classes.extent[0] != m_input.extent()[0])
+		throw "Extent mismatch";
+	classes.copy_to(m_target.view(stateProvider));
+}
+array_view<int, 1> module_class_nll_criterion::getTarget(state_provider const& stateProvider) {
+	return m_target.view(stateProvider);
+}
+buffer_view<float> module_class_nll_criterion::getOutput() {
+	return buffer_view<float>(m_output);
 }

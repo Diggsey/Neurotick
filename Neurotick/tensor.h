@@ -184,6 +184,8 @@ private:
 
 public:
 	buffer_view(buffer<T, N>& buffer) : m_buffer(&buffer) { }
+	template<typename U>
+	buffer_view(U* module) : m_buffer(buffer_view<T, N>(module->getOutput()).m_buffer) { }
 
 	inline extent<N> extent() const {
 		return m_buffer->extent();

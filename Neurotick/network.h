@@ -87,6 +87,7 @@ protected:
 	std::unique_ptr<table<>> m_tuples[tensor_type_count];
 	unsigned m_bufferSizes[buffer_type_count];
 	std::unique_ptr<array<int, 1>> m_buffers[buffer_type_count];
+	buffer_view<float> m_criterion;
 
 public:
 	inline void createTuple(tensor_type type, unsigned sequenceLength) {
@@ -94,6 +95,8 @@ public:
 		m_tupleSizes[type] = alloc.size();
 		if (m_tupleSizes[type] > 0) {
 			m_tuples[type] = std::make_unique<table<>>(extent<1>(m_tupleSizes[type] * sequenceLength));
+			fill(array_view<float,1>(m_tuples[type]->m_value), 0.0f);
+			fill(array_view<float, 1>(m_tuples[type]->m_gradient), 0.0f);
 		}
 	}
 	inline void createBuffer(buffer_type type, unsigned sequenceLength) {
@@ -103,7 +106,7 @@ public:
 			m_buffers[type] = std::make_unique<array<int, 1>>(extent<1>(m_bufferSizes[type] * sequenceLength));
 		}
 	}
-	inline sequence_evaluator(network* nn, unsigned sequenceLength = 16) : m_nn(nn), m_sequenceLength(sequenceLength) {
+	inline sequence_evaluator(network* nn, unsigned sequenceLength, buffer_view<float> criterion) : m_nn(nn), m_sequenceLength(sequenceLength), m_criterion(criterion) {
 		for (int i = 0; i < tensor_type_count; ++i)
 			m_tupleSizes[i] = 0;
 
@@ -143,7 +146,7 @@ public:
 	inline sequence_evaluator_state_provider operator[](unsigned idx) const {
 		return sequence_evaluator_state_provider(this, idx);
 	}
-	table_view<> evaluate() {
+	float evaluate() {
 		auto weights = getTensorView(0, tensor_type_weight);
 		float loss = 0.0f;
 
@@ -151,11 +154,23 @@ public:
 			fill(weights->m_gradient, 0.0f);
 		
 		for (int i = 0; i < (int)m_sequenceLength; ++i) {
-			m_nn->updateOutput((*this)[i]);
+			auto stateProvider = (*this)[i];
+			m_nn->updateOutput(stateProvider);
+			loss += reduce(m_criterion.view(stateProvider), 0.0f, [](float a, float b) restrict(cpu, amp) { return a + b; });
 		}
-		for (int i = (int)m_sequenceLength - 1; i >= 0; --i) {
-			m_nn->updateGradInput((*this)[i]);
+
+		if (m_nn->getIsLearning()) {
+			for (int i = (int)m_sequenceLength - 1; i >= 0; --i) {
+				auto stateProvider = (*this)[i];
+				m_nn->updateGradInput(stateProvider);
+			}
 		}
+
+		auto initState = getTensorView(0, tensor_type_state);
+		auto lastState = getTensorView(m_sequenceLength, tensor_type_state);
+		if (initState.is_initialized())
+			lastState->m_value.copy_to(initState->m_value);
+		return loss / m_sequenceLength;
 	}
 };
 

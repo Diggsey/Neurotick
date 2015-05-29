@@ -198,6 +198,7 @@ public:
 	virtual inline void updateGradInput(state_provider const& stateProvider);
 
 	inline void setInput(state_provider const& stateProvider, array_view<int, 1> classes);
+	inline array_view<int, 1> getInput(state_provider const& stateProvider);
 	inline tensor_view<2> getOutput();
 };
 
@@ -238,16 +239,40 @@ public:
 	virtual inline void updateGradInput(state_provider const& stateProvider);
 };
 
-class module_lstm : public module_container<1, 2, module_lstm> {
+template<int M, typename S>
+class module_container_function : public module_container<1, M, S> {
 public:
 	using module_container::module_container;
+
+	inline tensor_view<M> getOutput();
+};
+
+class module_lstm : public module_container_function<2, module_lstm> {
+public:
+	using module_container_function::module_container_function;
 
 	static inline std::array<tensor_view<2>, 1> build(network* nn, extent<1> extent, tensor_view<2> input);
 };
 
-class module_softmax : module_container<1, 2, module_lstm> {
+class module_softmax : public module_container_function<2, module_lstm> {
 public:
-	using module_container::module_container;
+	using module_container_function::module_container_function;
 
 	static inline std::array<tensor_view<2>, 1> build(network* nn, extent<1> extent, tensor_view<2> input);
+};
+
+class module_class_nll_criterion : public module {
+protected:
+	tensor_view<2> m_input;
+	buffer<int> m_target;
+	buffer<float> m_output;
+public:
+	inline module_class_nll_criterion(network* nn, tensor_view<2> input);
+
+	virtual inline void updateOutput(state_provider const& stateProvider);
+	virtual inline void updateGradInput(state_provider const& stateProvider);
+
+	inline void setTarget(state_provider const& stateProvider, array_view<int, 1> classes);
+	inline array_view<int, 1> getTarget(state_provider const& stateProvider);
+	inline buffer_view<float> getOutput();
 };
