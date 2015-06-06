@@ -66,20 +66,20 @@ public:
 	}
 };
 
-class sequence_evaluator_state_provider : public state_provider {
-	friend class sequence_evaluator;
+class evaluator_base_state_provider : public state_provider {
+	friend class evaluator_base;
 protected:
-	sequence_evaluator const* m_evaluator;
+	evaluator_base const* m_evaluator;
 	unsigned m_idx;
 
-	inline sequence_evaluator_state_provider(sequence_evaluator const* evaluator, unsigned idx) : m_evaluator(evaluator), m_idx(idx) { }
+	inline evaluator_base_state_provider(evaluator_base const* evaluator, unsigned idx) : m_evaluator(evaluator), m_idx(idx) { }
 public:
 	virtual table_view<> getTensorView(tensor_type type, index<1> offset, extent<1> size) const;
 	virtual table_view<> getNextState(index<1> offset, extent<1> size) const;
 	virtual array_view<int, 1> getBufferView(buffer_type type, index<1> offset, extent<1> size) const;
 };
 
-class sequence_evaluator {
+class evaluator_base {
 protected:
 	network* m_nn;
 	unsigned m_sequenceLength;
@@ -87,7 +87,6 @@ protected:
 	std::unique_ptr<table<>> m_tuples[tensor_type_count];
 	unsigned m_bufferSizes[buffer_type_count];
 	std::unique_ptr<array<int, 1>> m_buffers[buffer_type_count];
-	buffer_view<float> m_criterion;
 
 public:
 	inline void createTuple(tensor_type type, unsigned sequenceLength) {
@@ -95,7 +94,7 @@ public:
 		m_tupleSizes[type] = alloc.size();
 		if (m_tupleSizes[type] > 0) {
 			m_tuples[type] = std::make_unique<table<>>(extent<1>(m_tupleSizes[type] * sequenceLength));
-			fill(array_view<float,1>(m_tuples[type]->m_value), 0.0f);
+			fill(array_view<float, 1>(m_tuples[type]->m_value), 0.0f);
 			fill(array_view<float, 1>(m_tuples[type]->m_gradient), 0.0f);
 		}
 	}
@@ -106,7 +105,7 @@ public:
 			m_buffers[type] = std::make_unique<array<int, 1>>(extent<1>(m_bufferSizes[type] * sequenceLength));
 		}
 	}
-	inline sequence_evaluator(network* nn, unsigned sequenceLength, buffer_view<float> criterion) : m_nn(nn), m_sequenceLength(sequenceLength), m_criterion(criterion) {
+	inline evaluator_base(network* nn, unsigned sequenceLength) : m_nn(nn), m_sequenceLength(sequenceLength) {
 		for (int i = 0; i < tensor_type_count; ++i)
 			m_tupleSizes[i] = 0;
 
@@ -143,20 +142,33 @@ public:
 			return boost::none;
 		}
 	}
-	inline sequence_evaluator_state_provider operator[](unsigned idx) const {
-		return sequence_evaluator_state_provider(this, idx);
+	inline evaluator_base_state_provider operator[](unsigned idx) const {
+		return evaluator_base_state_provider(this, idx);
+	}
+};
+
+class sequence_evaluator : public evaluator_base {
+protected:
+	boost::optional<buffer_view<float>> m_criterion;
+
+public:
+	inline sequence_evaluator(network* nn, unsigned sequenceLength, buffer_view<float> criterion) : evaluator_base(nn, sequenceLength), m_criterion(criterion) {
+	}
+	inline sequence_evaluator(network* nn, unsigned sequenceLength) : evaluator_base(nn, sequenceLength), m_criterion() {
 	}
 	float evaluate() {
 		auto weights = getTensorView(0, tensor_type_weight);
 		float loss = 0.0f;
 
-		if (weights.is_initialized())
+		if (weights.is_initialized() && m_nn->getIsLearning())
 			fill(weights->m_gradient, 0.0f);
 		
 		for (int i = 0; i < (int)m_sequenceLength; ++i) {
 			auto stateProvider = (*this)[i];
 			m_nn->updateOutput(stateProvider);
-			loss += reduce(m_criterion.view(stateProvider), 0.0f, [](float a, float b) restrict(cpu, amp) { return a + b; });
+			if (m_nn->getIsLearning() && m_criterion.is_initialized()) {
+				loss += reduce(m_criterion->view(stateProvider), 0.0f, [](float a, float b) restrict(cpu, amp) { return a + b; });
+			}
 		}
 
 		if (m_nn->getIsLearning()) {
@@ -174,12 +186,12 @@ public:
 	}
 };
 
-table_view<> sequence_evaluator_state_provider::getTensorView(tensor_type type, index<1> offset, extent<1> size) const {
+table_view<> evaluator_base_state_provider::getTensorView(tensor_type type, index<1> offset, extent<1> size) const {
 	return m_evaluator->getTensorView(m_idx, type)->section(offset, size);
 }
-table_view<> sequence_evaluator_state_provider::getNextState(index<1> offset, extent<1> size) const {
+table_view<> evaluator_base_state_provider::getNextState(index<1> offset, extent<1> size) const {
 	return m_evaluator->getTensorView(m_idx + 1, tensor_type_state)->section(offset, size);
 }
-array_view<int, 1> sequence_evaluator_state_provider::getBufferView(buffer_type type, index<1> offset, extent<1> size) const {
+array_view<int, 1> evaluator_base_state_provider::getBufferView(buffer_type type, index<1> offset, extent<1> size) const {
 	return m_evaluator->getBufferView(m_idx, type)->section(offset, size);
 }

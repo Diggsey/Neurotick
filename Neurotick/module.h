@@ -182,6 +182,7 @@ public:
 	virtual inline void updateGradInput(state_provider const& stateProvider);
 
 	inline void setValue(state_provider const& stateProvider, array_view<float, 2> value);
+	inline void setValue(state_provider const& stateProvider, std::vector<std::vector<float>> value);
 	inline void getGradient(state_provider const& stateProvider, array_view<float, 2> gradient);
 	inline tensor_view<2> getOutput();
 };
@@ -254,7 +255,7 @@ public:
 	static inline std::array<tensor_view<2>, 1> build(network* nn, extent<1> extent, tensor_view<2> input);
 };
 
-class module_softmax : public module_container_function<2, module_lstm> {
+class module_softmax : public module_container_function<2, module_softmax> {
 public:
 	using module_container_function::module_container_function;
 

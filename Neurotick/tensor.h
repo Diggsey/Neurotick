@@ -6,6 +6,17 @@ void fill(array_view<T, Rank> arr, T initValue) {
 		arr[idx] = initValue;
 	});
 }
+template<typename T, int Rank>
+void clamp(array_view<T, Rank> arr, T minValue, T maxValue) {
+	parallel_for_each(arr.extent, [=](index<Rank> idx) restrict(amp) {
+		T x = arr[idx];
+		if (x < minValue)
+			x = minValue;
+		if (x > maxValue)
+			x = maxValue;
+		arr[idx] = x;
+	});
+}
 template<typename T, int Rank, typename F>
 void fill(array_view<T, Rank> arr, F&& f) {
 	parallel_for_each(arr.extent, std::forward<F>(f));

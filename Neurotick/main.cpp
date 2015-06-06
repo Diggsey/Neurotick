@@ -7,7 +7,7 @@
 struct rms_config {
 	float learningRate = 1e-2f;
 	float alpha = 0.99f;
-	float epsilon = 1e-8f;
+	float epsilon = 1e-4f;
 };
 
 float lerp(float alpha, float a, float b) restrict(amp) {
@@ -41,6 +41,8 @@ public:
 			weights.m_value[idx] -= config.learningRate * (gradient / rms);
 		});
 
+		clamp(weights.m_value, -5.0f, 5.0f);
+
 		return loss;
 	}
 };
@@ -56,6 +58,19 @@ public:
 		for (int i = 0; i < 256; ++i) {
 			m_charToClass[i] = -1;
 			m_classToChar[i] = -1;
+		}
+	}
+	char_vocab(std::string const& filename) {
+		m_classCount = 0;
+		for (int i = 0; i < 256; ++i) {
+			m_charToClass[i] = -1;
+			m_classToChar[i] = -1;
+		}
+
+		std::ifstream is(filename);
+		int c;
+		while ((c = is.get()) != std::char_traits<char>::eof()) {
+			addChar(c);
 		}
 	}
 	inline int addChar(int c) {
@@ -81,6 +96,29 @@ public:
 	inline int getClassCount() const {
 		return m_classCount;
 	}
+
+	inline void save(std::string const& filename, bool binary = true) const {
+		std::ofstream os(filename, std::ios::trunc|(binary ? std::ios::binary : 0));
+		if (binary) {
+			os.write((char const*)this, sizeof(char_vocab));
+		} else {
+			os << m_classCount << std::endl;
+			for (int i = 0; i < 256; ++i) {
+				os << m_charToClass[i] << " " << m_classToChar[i] << std::endl;
+			}
+		}
+	}
+	inline void load(std::string const& filename, bool binary = true) {
+		std::ifstream is(filename, binary ? std::ios::binary : 0);
+		if (binary) {
+			is.read((char*)this, sizeof(char_vocab));
+		} else {
+			is >> m_classCount;
+			for (int i = 0; i < 256; ++i) {
+				is >> m_charToClass[i] >> m_classToChar[i];
+			}
+		}
+	}
 };
 
 class char_sequence_loader {
@@ -98,12 +136,7 @@ public:
 		if (vocab.is_initialized()) {
 			m_vocab = *vocab;
 		} else {
-			int c;
-			while ((c = m_is.get()) != std::char_traits<char>::eof()) {
-				m_vocab.addChar(c);
-			}
-			m_is.clear();
-			m_is.seekg(0);
+			m_vocab = char_vocab(filename);
 		}
 	}
 	inline char_vocab const& getVocab() const {
@@ -154,14 +187,29 @@ std::string ws2s(const std::wstring& wstr) {
 	return converterX.to_bytes(wstr);
 }
 
-template<typename T> void saveTable(std::string const& filename, array_view<T, 1> data) {
-	std::ofstream os(filename);
-	os.write((char*)data.data(), sizeof(T)*data.extent.size());
+template<typename T> void saveTable(std::string const& filename, array_view<T, 1> data, bool binary = true) {
+	int openMode = std::ios::trunc;
+	if (binary)
+		openMode |= std::ios::binary;
+	std::ofstream os(filename, openMode);
+	if (binary) {
+		os.write((char*)data.data(), sizeof(T)*data.extent.size());
+	} else {
+		for (unsigned i = 0; i < data.extent.size(); ++i) {
+			os << data[i] << std::endl;
+		}
+	}
 }
 
-template<typename T> void loadTable(std::string const& filename, array_view<T, 1> data) {
-	std::ifstream is(filename);
-	is.read((char*)data.data(), sizeof(T)*data.extent.size());
+template<typename T> void loadTable(std::string const& filename, array_view<T, 1> data, bool binary = true) {
+	std::ifstream is(filename, binary ? std::ios::binary : 0);
+	if (binary) {
+		is.read((char*)data.data(), sizeof(T)*data.extent.size());
+	} else {
+		for (unsigned i = 0; i < data.extent.size(); ++i) {
+			is >> data[i];
+		}
+	}
 }
 
 int main(int argc, char* argv[])
@@ -170,17 +218,24 @@ int main(int argc, char* argv[])
 	std::cout << "Using device: " << ws2s(defaultDevice.get_description()) << std::endl;
 
 	network nn;
-	const bool learning = false;
+	const bool learning = true;
 
 	nn.setIsLearning(learning);
 
-	const int sequenceLength = 16;
+	const int sequenceLength = learning ? 16 : 1;
 	const int batchSize = learning ? 16 : 1;
 	const int rnnSize = 256;
 
-	char_sequence_loader loader("data/input.txt", boost::none, sequenceLength, batchSize);
+	char_vocab vocab;
+	if (learning) {
+		vocab = char_vocab("data/input.txt");
+		vocab.save("data/vocab.dat", false);
+	} else {
+		vocab.load("data/vocab.dat", false);
+	}
 
-	const int classCount = loader.getVocab().getClassCount();
+
+	const int classCount = vocab.getClassCount();
 
 	// Construct rnn
 	auto embedding = nn.make<module_class_embedding>(classCount, extent<2>(batchSize, rnnSize));
@@ -191,6 +246,7 @@ int main(int argc, char* argv[])
 	sequence_evaluator evaluator(&nn, sequenceLength, criterion);
 
 	if (learning) {
+		char_sequence_loader loader("data/input.txt", boost::none, sequenceLength, batchSize);
 
 		// Setup training scenario
 
@@ -200,6 +256,19 @@ int main(int argc, char* argv[])
 				auto stateProvider = evaluator[i];
 				loader.getInputBatch(i, embedding->getInput(stateProvider));
 				loader.getTargetBatch(i, criterion->getTarget(stateProvider));
+
+				//for (int j = 0; j < batchSize; ++j) {
+				//	int c = embedding->getInput(stateProvider)[j];
+				//	char ch = loader.getVocab().getChar(c);
+				//	std::cout << ((ch == 10 || ch == 13) ? (char)' ' : ch);
+				//}
+				//std::cout << (char)' ';
+				//for (int j = 0; j < batchSize; ++j) {
+				//	int c = criterion->getTarget(stateProvider)[j];
+				//	char ch = loader.getVocab().getChar(c);
+				//	std::cout << ((ch == 10 || ch == 13) ? (char)' ' : ch);
+				//}
+				//std::cout << std::endl;
 			}
 
 			return evaluator.evaluate();
@@ -218,8 +287,7 @@ int main(int argc, char* argv[])
 				std::cout << "Iteration: " << iteration << ", Loss: " << loss << std::endl;
 
 				if (iteration % 100 == 0) {
-					saveTable("data/weights.dat", evaluator.getTensorView(0, tensor_type_weight)->m_value);
-					saveTable("data/state.dat", evaluator.getTensorView(0, tensor_type_state)->m_value);
+					saveTable("data/weights.dat", evaluator.getTensorView(0, tensor_type_weight)->m_value, false);
 				}
 
 				++iteration;
@@ -227,11 +295,16 @@ int main(int argc, char* argv[])
 			loader.reset();
 		}
 	} else {
-		loadTable("data/weights.dat", evaluator.getTensorView(0, tensor_type_weight)->m_value);
-		loadTable("data/state.dat", evaluator.getTensorView(0, tensor_type_state)->m_value);
+		loadTable("data/weights.dat", evaluator.getTensorView(0, tensor_type_weight)->m_value, false);
+		fill(evaluator.getTensorView(0, tensor_type_state)->m_value, 0.0f);
 
 		auto stateProvider = evaluator[0];
-		auto vocab = loader.getVocab();
+
+		std::string primer = "Hello, my name is ";
+		for (unsigned i = 0; i < primer.length(); ++i) {
+			embedding->getInput(stateProvider)[0] = vocab.getClass((unsigned char)primer[i]);
+			evaluator.evaluate();
+		}
 
 		char prevChar = ' ';
 		while (true) {

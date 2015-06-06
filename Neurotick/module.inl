@@ -29,7 +29,7 @@ void module_function<N, S>::updateOutput(state_provider const& stateProvider) {
 
 	try {
 		// Update outputs
-		output.m_value.discard_data();
+		//output.m_value.discard_data();
 
 		parallel_for_each(
 			output.extent(),
@@ -40,8 +40,8 @@ void module_function<N, S>::updateOutput(state_provider const& stateProvider) {
 
 		if (m_network->getIsLearning()) {
 			// Clear gradients
-			for (int i = 0; i < N; ++i)
-				inputs[i].m_gradient.discard_data();
+			//for (int i = 0; i < N; ++i)
+			//	inputs[i].m_gradient.discard_data();
 
 			parallel_for_each(
 				output.extent(),
@@ -137,7 +137,7 @@ void module_scalar<N, S>::backward(index<2> idx, table_view<2> const& output, fi
 	}, dacc0, acc, x);
 
 	float y[N];
-	range_to<N - 1>::eachRev<0, 0, 0, 0>([=](int i, float& yi, float& acci, auto& xi, float& dacc0i) restrict(amp) {
+	range_to<N>::eachRev<0, 0, 0, 0>([=](int i, float& yi, float& acci, auto& xi, float& dacc0i) restrict(amp) {
 		float dacc1 = S::dop1(acci, xi);
 		yi = dacc1*dacc0i;
 	}, y, acc, x, dacc0);
@@ -295,7 +295,7 @@ void module_linear::updateGradInput(state_provider const& stateProvider) {
 
 module_linear::module_linear(network* nn, concurrency::extent<1> extent, tensor_view<2> input)
 	: module_function(nn, concurrency::extent<2>(input.extent()[0], extent[0]), { input })
-	, m_weights(nn, tensor_type_weight, concurrency::extent<2>(extent[0], module_function::extent({ input })[0]))
+	, m_weights(nn, tensor_type_weight, concurrency::extent<2>(extent[0], input.extent()[1]))
 	, m_bias(nn, tensor_type_weight, extent) { }
 
 void module_linear::forward(index<2> idx, table_view<2> const& output, fixed_array<table_view<2>, 1> const& inputs, state_t state) restrict(amp) {
@@ -375,7 +375,7 @@ void module_log_soft_max::updateOutput(state_provider const& stateProvider) {
 
 	try {
 		// Update outputs
-		output.m_value.discard_data();
+		//output.m_value.discard_data();
 		scratch.m_value.discard_data();
 		maxInput.m_value.discard_data();
 
@@ -416,7 +416,7 @@ void module_log_soft_max::updateOutput(state_provider const& stateProvider) {
 
 		if (m_network->getIsLearning()) {
 			// Clear gradients
-			input.m_gradient.discard_data();
+			//input.m_gradient.discard_data();
 			scratch.m_gradient.discard_data();
 
 			parallel_for_each(
@@ -478,6 +478,14 @@ void module_input::setValue(state_provider const& stateProvider, array_view<floa
 	if (value.extent != m_output.extent())
 		throw "Extent mismatch";
 	value.copy_to(m_output.view(stateProvider).m_value);
+}
+void module_input::setValue(state_provider const& stateProvider, std::vector<std::vector<float>> value) {
+	auto output = m_output.view(stateProvider).m_value;
+	for (int i = 0; i < output.extent[0]; ++i) {
+		for (int j = 0; j < output.extent[1]; ++j) {
+			output[i][j] = value[i][j];
+		}
+	}
 }
 void module_input::getGradient(state_provider const& stateProvider, array_view<float, 2> gradient) {
 	if (gradient.extent != m_output.extent())
